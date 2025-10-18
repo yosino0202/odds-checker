@@ -1,0 +1,36 @@
+name: Update races.csv automatically
+
+on:
+  schedule:
+    - cron: '0 1 * * *'   # 毎日 午前10時（日本時間）に実行
+  workflow_dispatch:       # 手動実行もOK
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install requests beautifulsoup4 pandas
+
+      - name: Run scraper
+        run: python scraper.py
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add data/races.csv
+          git commit -m "Auto-update races.csv"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
