@@ -1,64 +1,75 @@
 import os
-import re
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+from datetime import datetime
 
-# dataフォルダがなければ自動作成
+# 保存先ディレクトリ作成
 os.makedirs("data", exist_ok=True)
 
 def fetch_predicted_odds():
     """
-    netkeibaの予想オッズを自動取得
-    データが取れなかった場合はダミーデータで補う
+    netkeibaの予想オッズをスクレイピングしてCSV化する
     """
-    base_url = "https://race.netkeiba.com"
-    odds_top_url = f"{base_url}/top/odds_list.html"
-    headers = {"User-Agent": "Mozilla/5.0"}
+    print("🔍 netkeibaから予想オッズを取得中...")
+
+    base_url = "https://race.netkeiba.com/race/odds.html?race_id="
+    race_ids = [
+        # テスト用：今日のいくつかのレースID（毎日変わるので、動作確認後に自動化）
+        "202405030811", "202405030812", "202405030813"
+    ]
+
     all_data = []
 
-    try:
-        response = requests.get(odds_top_url, headers=headers, timeout=10)
-        response.encoding = "EUC-JP"
-        soup = BeautifulSoup(response.text, "html.parser")
+    for race_id in race_ids:
+        url = f"{base_url}{race_id}"
+        res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+        res.encoding = res.apparent_encoding
 
-        race_links = []
-        for a in soup.select("a[href*='odds/index.html?race_id=']"):
-            href = a.get("href")
-            if "race_id=" in href:
-                race_links.append(base_url + href)
+        if res.status_code != 200:
+            print(f"❌ {race_id} の取得に失敗: {res.status_code}")
+            continue
 
-        for link in race_links[:5]:  # 通信節約
-            race_id = re.search(r"race_id=(\d+)", link).group(1)
-            race_name = f"Race {race_id}"
-            r = requests.get(link, headers=headers, timeout=10)
-            r.encoding = "EUC-JP"
-            s = BeautifulSoup(r.text, "html.parser")
+        soup = BeautifulSoup(res.text, "html.parser")
 
-            horses = [t.get_text(strip=True) for t in s.select(".HorseName a")]
-            odds = [t.get_text(strip=True) for t in s.select(".Odds span")]
+        # 馬名と予想オッズを取得
+        rows = soup.select("table.odds_tan tr")
 
-            for name, odd in zip(horses, odds):
-                try:
-                    all_data.append({
-                        "race": race_name,
-                        "horse": name,
-                        "predicted_odds": float(odd)
-                    })
-                except ValueError:
-                    continue
+        for row in rows:
+            cols = row.find_all("td")
+            if len(cols) < 3:
+                continue
 
-    except Exception as e:
-        print("Error during scraping:", e)
+            uma_num = cols[0].get_text(strip=True)
+            uma_name = cols[1].get_text(strip=True)
+            odds_text = cols[2].get_text(strip=True).replace("倍", "")
 
-    # 🧩 もしデータが空なら、ダミーデータを入れる
+            try:
+                odds = float(odds_text)
+                win_prob = round(100 / odds, 2)  # 勝率に変換
+            except ValueError:
+                odds, win_prob = None, None
+
+            all_data.append({
+                "race_id": race_id,
+                "馬番": uma_num,
+                "馬名": uma_name,
+                "予想オッズ": odds,
+                "予想勝率(%)": win_prob,
+            })
+
     if not all_data:
-        all_data = [
-            {"race": "東京11R", "horse": "サンプルホースA", "predicted_odds": 2.8},
-            {"race": "東京11R", "horse": "サンプルホースB", "predicted_odds": 4.2},
-            {"race": "京都10R", "horse": "サンプルホースC", "predicted_odds": 5.5},
-        ]
+        print("⚠️ データを取得できませんでした。")
+        return None
 
     df = pd.DataFrame(all_data)
-    df.to_csv("data/races.csv", index=False)
+    df["取得日時"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    df.to_csv("data/races.csv", index=False, encoding="utf-8-sig")
+    print("✅ races.csv を更新しました。")
+
     return df
+
+
+if __name__ == "__main__":
+    fetch_predicted_odds()
